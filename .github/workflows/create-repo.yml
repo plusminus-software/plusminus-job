@@ -1,0 +1,107 @@
+name: Create New Repository
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository_name:
+        description: 'Name of the new repository'
+        required: true
+      repository_description:
+        description: 'The description of the new repository'
+        required: true
+      repository_private:
+        description: 'Should the new repository be private? (true/false)'
+        type: choice
+        required: false
+        default: 'true'
+        options:
+          - true
+          - false
+
+jobs:
+  create-repo:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+      OWNER: ${{ github.repository_owner }}
+    steps:
+      - name: Checkout template repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Export all workflow inputs as env vars
+        shell: bash
+        run: |
+          export GITHUB_EVENT_INPUTS_JSON='${{ toJson(github.event.inputs) }}'
+          bash .github/scripts/export-envs.sh
+
+      - name: Create new repository
+        run: |
+          echo "Creating repository '$REPOSITORY_NAME' in the organization '$OWNER'"
+          curl --fail-with-body -X POST -H "Authorization: token $GH_TOKEN" \
+            -d "{\"name\":\"$REPOSITORY_NAME\", \"description\":\"$REPOSITORY_DESCRIPTION\", \"private\": $REPOSITORY_PRIVATE}" \
+            https://api.github.com/orgs/$OWNER/repos
+          echo "Repository '$REPOSITORY_NAME' created successfully."
+
+  populate-repo:
+    needs: create-repo
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT }}  # Personal Access Token with repo scope
+      OWNER: ${{ github.repository_owner }}
+      CURRENT_REPOSITORY_NAME: ${{ github.event.repository.name }}
+    steps:
+      - name: Checkout template repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Export all workflow inputs as env vars
+        shell: bash
+        run: |
+          export GITHUB_EVENT_INPUTS_JSON='${{ toJson(github.event.inputs) }}'
+          bash .github/scripts/export-envs.sh
+
+      - name: Clone the newly created repo
+        run: |
+          REPO_URL="https://x-access-token:$GH_TOKEN@github.com/$OWNER/$REPOSITORY_NAME.git"
+          cd ..
+          git clone $REPO_URL
+
+      - name: Copy template repo to newly created repo
+        run: |
+          cd ..
+          rsync -av --exclude='.git' $CURRENT_REPOSITORY_NAME/ $REPOSITORY_NAME/
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '8'
+
+      - name: Download plusminus-replacer
+        run: |
+          cd ../$REPOSITORY_NAME
+          wget https://github.com/plusminus-software/plusminus-replacer/releases/latest/download/plusminus-replacer.jar
+
+      - name: Run plusminus-replacer
+        run: |
+          cd ../$REPOSITORY_NAME
+          java -jar plusminus-replacer.jar
+
+      - name: Push first commit to newly created repo
+        run: |
+          cd ../$REPOSITORY_NAME
+          rm plusminus-replacer.jar
+          rm replacer.yml
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+          git add .
+          git commit -m "Initial commit"
+          git push -u origin main
+
+      - name: Clean up
+        run: |
+          cd ..
+          rm -rf $REPOSITORY_NAME
