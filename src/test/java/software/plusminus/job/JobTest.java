@@ -2,6 +2,10 @@ package software.plusminus.job;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import software.plusminus.job.steps.ErrorStep;
+import software.plusminus.job.steps.InvalidStep;
+import software.plusminus.job.steps.NotPausedStep;
+import software.plusminus.job.steps.PausedStep;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -9,7 +13,6 @@ import java.util.function.Consumer;
 
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockingDetails;
 import static org.mockito.Mockito.times;
@@ -18,17 +21,16 @@ import static software.plusminus.check.Checks.check;
 
 class JobTest {
 
-    private AtomicBoolean paused = new AtomicBoolean(false);
+    private AtomicBoolean paused = new AtomicBoolean(true);
     private AtomicBoolean error = new AtomicBoolean(true);
     private Consumer<JobStatus> listener = mock(Consumer.class);
     private ArgumentCaptor<JobStatus> captor = ArgumentCaptor.forClass(JobStatus.class);
     private Job job = new Job(listener);
-    private Step<?, ?> step1 = job.createStep(this::notPausedFunction)
-            .rollback((a, b) -> notPausedFunction())
-            .build();
-    private Step<?, ?> step2 = job.createStep(this::pausedFunction)
-            .rollback((a, b) -> pausedFunction())
-            .build();
+    private NotPausedStep step1 = new NotPausedStep();
+    private NotPausedStep step2 = new NotPausedStep();
+    private PausedStep pausedStep = new PausedStep(paused);
+    private ErrorStep errorStep = new ErrorStep(error);
+    private InvalidStep invalidStep = new InvalidStep();
 
     @Test
     void emptyJob() {
@@ -38,9 +40,12 @@ class JobTest {
 
     @Test
     void skippedJob() {
-        step1.skip();
-        step2.skip();
+        job.addStep(step1);
+        job.addStep(step2);
+        job.skip(step1);
+        job.skip(step2);
 
+        checkJobStatusChanges(JobStatus.READY, JobStatus.SKIPPED);
         check(job.status()).is(JobStatus.SKIPPED);
         check(step1.status()).is(JobStatus.SKIPPED);
         check(step2.status()).is(JobStatus.SKIPPED);
@@ -48,6 +53,9 @@ class JobTest {
 
     @Test
     void readyJob() {
+        job.addStep(step1);
+        job.addStep(step2);
+
         checkJobStatusChanges(JobStatus.READY);
         check(job.status()).is(JobStatus.READY);
         check(step1.status()).is(JobStatus.READY);
@@ -56,7 +64,11 @@ class JobTest {
 
     @Test
     void successJob() {
+        job.addStep(step1);
+        job.addStep(step2);
+
         job.run();
+
         check(job.status()).is(JobStatus.SUCCESS);
         check(step1.status()).is(JobStatus.SUCCESS);
         check(step2.status()).is(JobStatus.SUCCESS);
@@ -64,6 +76,9 @@ class JobTest {
 
     @Test
     void successRollbackJob() {
+        job.addStep(step1);
+        job.addStep(step2);
+
         job.run();
         job.rollback();
 
@@ -74,11 +89,9 @@ class JobTest {
 
     @Test
     void partialRollbackJob() {
-        Step<?, ?> toReplace = step2;
-        step2 = job.createStep(this::pausedFunction)
-                .rollback(null)
-                .build();
-        job.replaceStep(toReplace, step2);
+        job.addStep(step1);
+        job.addStep(step2);
+        step2.rollback(false);
 
         job.run();
         job.rollback();
@@ -90,21 +103,25 @@ class JobTest {
 
     @Test
     void waitingJob() {
-        replaceStep1(this::pausedFunction);
-        paused.set(true);
+        job.addStep(pausedStep);
+        job.addStep(step2);
 
         CompletableFuture<?> future = CompletableFuture.runAsync(job::run);
 
         checkJobStatusChanges(JobStatus.READY, JobStatus.WAITING, JobStatus.RUNNING);
         check(job.status()).is(JobStatus.RUNNING);
-        check(step1.status()).is(JobStatus.RUNNING);
+        check(pausedStep.status()).is(JobStatus.RUNNING);
         check(step2.status()).is(JobStatus.WAITING);
         unlock(future);
+        check(job.status()).is(JobStatus.SUCCESS);
+        check(pausedStep.status()).is(JobStatus.SUCCESS);
+        check(step2.status()).is(JobStatus.SUCCESS);
     }
 
     @Test
     void runningJob() {
-        paused.set(true);
+        job.addStep(step1);
+        job.addStep(pausedStep);
 
         CompletableFuture<?> future = CompletableFuture.runAsync(job::run);
 
@@ -112,24 +129,31 @@ class JobTest {
                 JobStatus.RUNNING);
         check(job.status()).is(JobStatus.RUNNING);
         check(step1.status()).is(JobStatus.SUCCESS);
-        check(step2.status()).is(JobStatus.RUNNING);
+        check(pausedStep.status()).is(JobStatus.RUNNING);
         unlock(future);
+        check(job.status()).is(JobStatus.SUCCESS);
+        check(step1.status()).is(JobStatus.SUCCESS);
+        check(pausedStep.status()).is(JobStatus.SUCCESS);
     }
 
     @Test
     void errorJob() {
-        replaceStep1(this::errorFunction);
+        job.addStep(errorStep);
+        job.addStep(step2);
 
         IllegalStateException exception = assertThrows(IllegalStateException.class, job::run);
 
         check(exception.getMessage()).is("Test error");
         check(job.status()).is(JobStatus.ERROR);
-        check(step1.status()).is(JobStatus.ERROR);
+        check(errorStep.status()).is(JobStatus.ERROR);
         check(step2.status()).is(JobStatus.READY);
     }
 
     @Test
     void rollbackJob() {
+        job.addStep(step1);
+        job.addStep(pausedStep);
+        paused.set(false);
         job.run();
         paused.set(true);
 
@@ -139,18 +163,20 @@ class JobTest {
                 JobStatus.RUNNING, JobStatus.SUCCESS, JobStatus.WAITING, JobStatus.ROLLBACK);
         check(job.status()).is(JobStatus.ROLLBACK);
         check(step1.status()).is(JobStatus.WAITING);
-        check(step2.status()).is(JobStatus.ROLLBACK);
+        check(pausedStep.status()).is(JobStatus.ROLLBACK);
         unlock(future);
+        check(job.status()).is(JobStatus.SUCCESS_ROLLBACK);
+        check(step1.status()).is(JobStatus.SUCCESS_ROLLBACK);
+        check(pausedStep.status()).is(JobStatus.SUCCESS_ROLLBACK);
     }
 
     @Test
     void errorRollbackJob() {
-        Step<?, ?> toReplace = step2;
-        step2 = job.createStep(this::pausedFunction)
-                .rollback((a, b) -> this.errorFunction())
-                .build();
-        job.replaceStep(toReplace, step2);
+        job.addStep(step1);
+        job.addStep(errorStep);
+        error.set(false);
         job.run();
+        error.set(true);
 
         IllegalStateException exception = assertThrows(IllegalStateException.class, job::rollback);
 
@@ -159,51 +185,37 @@ class JobTest {
                 JobStatus.RUNNING, JobStatus.SUCCESS, JobStatus.WAITING, JobStatus.ROLLBACK, JobStatus.ERROR_ROLLBACK);
         check(job.status()).is(JobStatus.ERROR_ROLLBACK);
         check(step1.status()).is(JobStatus.SUCCESS);
-        check(step2.status()).is(JobStatus.ERROR_ROLLBACK);
+        check(errorStep.status()).is(JobStatus.ERROR_ROLLBACK);
     }
 
     @Test
     void invalidJob() {
-        clearInvocations(listener);
-        job = new Job(listener);
-        step1 = job.createStep(p -> { })
-                .parameters(validParameters())
-                .build();
-        step2 = job.createStep(p -> { })
-                .parameters(invalidParameters())
-                .build();
+        job.addStep(step1);
+        job.addStep(invalidStep);
 
         checkJobStatusChanges(JobStatus.READY, JobStatus.INVALID);
         check(job.status()).is(JobStatus.INVALID);
         check(step1.status()).is(JobStatus.READY);
-        check(step2.status()).is(JobStatus.INVALID);
+        check(invalidStep.status()).is(JobStatus.INVALID);
     }
 
     @Test
     void validJob() {
-        TestParameters parameters = invalidParameters();
-        clearInvocations(listener);
-        job = new Job(listener);
-        step1 = job.createStep(p -> { })
-                .parameters(validParameters())
-                .build();
-        step2 = job.createStep(p -> { })
-                .parameters(parameters)
-                .build();
-
-        parameters.setString("correct string");
-        parameters.setNumber(10);
-        step2.validate();
+        job.addStep(step1);
+        job.addStep(invalidStep);
+        invalidStep.makeValid();
+        job.validate(invalidStep);
 
         checkJobStatusChanges(JobStatus.READY, JobStatus.INVALID, JobStatus.READY);
         check(job.status()).is(JobStatus.READY);
         check(step1.status()).is(JobStatus.READY);
-        check(step2.status()).is(JobStatus.READY);
+        check(invalidStep.status()).is(JobStatus.READY);
     }
 
     @Test
     void retryRun() {
-        replaceStep1(this::errorFunction);
+        job.addStep(errorStep);
+        job.addStep(step2);
         assertThrows(IllegalStateException.class, job::run);
         error.set(false);
 
@@ -216,7 +228,8 @@ class JobTest {
 
     @Test
     void retryRollback() {
-        replaceStep1(this::errorFunction);
+        job.addStep(errorStep);
+        job.addStep(step2);
         error.set(false);
         job.run();
         error.set(true);
@@ -233,42 +246,9 @@ class JobTest {
         check(job.status()).is(JobStatus.SUCCESS_ROLLBACK);
     }
 
-    private TestParameters validParameters() {
-        TestParameters parameters = new TestParameters();
-        parameters.setString("someString");
-        parameters.setNumber(42);
-        return parameters;
-    }
-
-    private TestParameters invalidParameters() {
-        return new TestParameters();
-    }
-
-    private void pausedFunction() {
-        await().until(() -> !paused.get());
-    }
-
-    private void notPausedFunction() {
-        // Just empty function
-    }
-
-    private void errorFunction() {
-        if (error.get()) {
-            throw new IllegalStateException("Test error");
-        }
-    }
-
     private void unlock(CompletableFuture<?> future) {
         paused.set(false);
         future.join();
-    }
-
-    private void replaceStep1(Runnable runnable) {
-        Step<?, ?> toReplace = step1;
-        step1 = job.createStep(runnable)
-                .rollback((a, b) -> runnable.run())
-                .build();
-        job.replaceStep(toReplace, step1);
     }
 
     private void checkJobStatusChanges(JobStatus... statuses) {

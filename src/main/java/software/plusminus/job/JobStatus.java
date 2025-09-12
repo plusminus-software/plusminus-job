@@ -43,10 +43,10 @@ public enum JobStatus {
         }
     }
 
-    public static JobStatus max(Collection<Step<?, ?>> steps,
+    public static JobStatus max(Collection<StepController<?>> steps,
                                 JobStatus defaultValue) {
         return steps.stream()
-                .map(Step::status)
+                .map(StepController::status)
                 .max(Comparator.comparingInt(status -> status.priority))
                 .orElse(defaultValue);
     }

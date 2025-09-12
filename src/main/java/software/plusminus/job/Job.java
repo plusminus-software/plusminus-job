@@ -3,15 +3,13 @@ package software.plusminus.job;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
-import java.util.function.Function;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 
 public class Job {
 
-    private List<Step<?, ?>> steps = new ArrayList<>();
-    private List<Step<?, ?>> progress = new ArrayList<>();
+    private List<StepController<?>> steps = new ArrayList<>();
+    private List<StepController<?>> progress = new ArrayList<>();
     @Nullable
     private Consumer<JobStatus> listener;
     private JobStatus status = JobStatus.INVALID;
@@ -24,56 +22,64 @@ public class Job {
         this.listener = listener;
     }
 
-    public <T> Step.StepBuilder<T, Void> createStep(Consumer<T> consumer) {
-        return createStep(t -> {
-            consumer.accept(t);
-            return null;
-        });
+    public <T> void addStep(Step<T> step) {
+        checkIsNotPresent(steps, step, "Cannot add step: already present in job");
+        StepController<T> controller = StepController.of(step);
+        steps.add(controller);
+        controller.link(this);
     }
 
-    public <R> Step.StepBuilder<Void, R> createStep(Supplier<R> supplier) {
-        return createStep(t -> {
-            return supplier.get();
-        });
-    }
-
-    public Step.StepBuilder<Void, Void> createStep(Runnable runnable) {
-        return createStep(t -> {
-            runnable.run();
-            return null;
-        });
-    }
-
-    public <T, R> Step.StepBuilder<T, R> createStep(Function<T, R> function) {
-        return Step.of(function).job(this);
-    }
-
-    public void removeStep(Step<?, ?> step) {
-        checkProgressIsEmpty();
-        boolean removed = steps.remove(step);
-        if (!removed) {
-            throw new IllegalArgumentException("Cannot remove unknown step");
+    public void removeStep(Step<?> step) {
+        StepController<?> toRemove = checkIsPresent(steps, step, "Cannot remove step: not present in job");
+        checkIsNotPresent(progress, step, "Cannot remove step: already present in job's progress");
+        boolean result = steps.remove(toRemove);
+        toRemove.unlink();
+        if (!result) {
+            throw new IllegalStateException("Cannot remove step: was already removed in a parallel thread");
         }
     }
 
-    public void replaceStep(Step<?, ?> from, Step<?, ?> to) {
-        checkProgressIsEmpty();
-        int indexFrom = steps.indexOf(from);
-        if (indexFrom == -1) {
-            throw new IllegalArgumentException("Cannot replace unknown step");
+    public void replaceStep(Step<?> from, Step<?> to) {
+        StepController<?> fromController = checkIsPresent(steps, from,
+                "Cannot replace steps: the 'from' step is not present in job");
+        checkIsNotPresent(progress, from, "Cannot replace steps: "
+                + "the 'from' step is already present in job's progress");
+        checkIsNotPresent(progress, to, "Cannot replace steps: "
+                + "the 'to' step is already present in job's progress");
+        int index = steps.indexOf(fromController);
+        if (index == -1) {
+            throw new IllegalStateException("Cannot replace steps:"
+                    + " the 'from' step was already removed in a parallel thread");
         }
-        int indexTo = steps.indexOf(to);
-        steps.set(indexFrom, to);
-        if (indexTo != -1) {
-            steps.remove(indexTo);
+
+        StepController<?> toController = find(steps, to);
+        if (toController == null) {
+            toController = StepController.of(to);
+            steps.set(index, toController);
+            toController.link(this);
+        } else {
+            steps.set(index, toController);
         }
+        fromController.unlink();
+    }
+
+    public void skip(Step<?> step) {
+        checkIsNotPresent(progress, step, "Cannot skip step: already present in job's progress");
+        StepController<?> controller = checkIsPresent(steps, step, "Cannot skip step: not present in job");
+        controller.skip();
+    }
+
+    public void unskip(Step<?> step) {
+        checkIsNotPresent(progress, step, "Cannot unskip step: already present in job's progress");
+        StepController<?> controller = checkIsPresent(steps, step, "Cannot unskip step: not present in job");
+        controller.unskip();
     }
 
     public void run() {
-        List<Step<?, ?>> stepsToRun = stepsToRun();
+        List<StepController<?>> stepsToRun = stepsToRun();
         start(JobAction.RUN, stepsToRun);
         try {
-            steps.forEach(Step::run);
+            steps.forEach(StepController::run);
         } finally {
             end(stepsToRun);
         }
@@ -84,7 +90,7 @@ public class Job {
         try {
             while (!progress.isEmpty()) {
                 int index = progress.size() - 1;
-                Step<?, ?> step = progress.get(index);
+                StepController<?> step = progress.get(index);
                 step.rollback();
                 progress.remove(index);
             }
@@ -93,19 +99,17 @@ public class Job {
         }
     }
 
+    public <T> void validate(Step<T> step) {
+        StepController<?> controller = checkIsPresent(steps, step,
+                "Cannot validate step: not present in job");
+        controller.validate();
+    }
+
     public JobStatus status() {
         return status;
     }
 
-    void addStep(Step<?, ?> step) {
-        checkProgressIsEmpty();
-        if (steps.contains(step)) {
-            return;
-        }
-        steps.add(step);
-    }
-
-    void addProgress(Step<?, ?> step) {
+    void addProgress(StepController<?> step) {
         progress.add(step);
     }
 
@@ -127,15 +131,15 @@ public class Job {
         }
     }
 
-    private void start(JobAction action, List<Step<?, ?>> stepsToProcess) {
-        stepsToProcess.forEach(Step::validate);
+    private void start(JobAction action, List<StepController<?>> stepsToProcess) {
+        stepsToProcess.forEach(StepController::validate);
         calculateStatus();
         status.checkAction(action);
-        stepsToProcess.forEach(Step::waiting);
+        stepsToProcess.forEach(StepController::waiting);
     }
 
-    private void end(List<Step<?, ?>> stepsToProcess) {
-        stepsToProcess.forEach(Step::unwaiting);
+    private void end(List<StepController<?>> stepsToProcess) {
+        stepsToProcess.forEach(StepController::unwaiting);
     }
 
     private void calculateStatus() {
@@ -143,17 +147,37 @@ public class Job {
         changeStatus(calculatedStatus);
     }
 
-    private List<Step<?, ?>> stepsToRun() {
+    private List<StepController<?>> stepsToRun() {
         return steps.stream()
                 .filter(step -> step.status() != JobStatus.SKIPPED)
                 .filter(step -> !progress.contains(step))
                 .collect(Collectors.toList());
     }
 
-    private void checkProgressIsEmpty() {
-        if (!progress.isEmpty()) {
-            throw new IllegalStateException("Can't change steps: there is progress on job");
+    @Nullable
+    private StepController<?> find(List<StepController<?>> controllers, Step<?> step) {
+        return controllers.stream()
+                .filter(controller -> controller.step() == step)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private void checkIsNotPresent(List<StepController<?>> controllers,
+                                   Step<?> step,
+                                   String errorMessage) {
+        StepController<?> present = find(controllers, step);
+        if (present != null) {
+            throw new IllegalStateException(errorMessage);
         }
     }
 
+    private StepController<?> checkIsPresent(List<StepController<?>> controllers,
+                                             Step<?> step,
+                                             String errorMessage) {
+        StepController<?> present = find(controllers, step);
+        if (present == null) {
+            throw new IllegalStateException(errorMessage);
+        }
+        return present;
+    }
 }
