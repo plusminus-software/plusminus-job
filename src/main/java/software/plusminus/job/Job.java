@@ -79,7 +79,7 @@ public class Job {
         List<StepController<?>> stepsToRun = stepsToRun();
         start(JobAction.RUN, stepsToRun);
         try {
-            steps.forEach(StepController::run);
+            stepsToRun.forEach(StepController::run);
         } finally {
             end(stepsToRun);
         }
