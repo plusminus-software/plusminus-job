@@ -14,13 +14,14 @@ public enum JobStatus {
     READY(1, JobAction.SKIP, JobAction.WAIT, JobAction.RUN, JobAction.VALIDATE),
     SUCCESS(2, JobAction.SKIP, JobAction.WAIT, JobAction.ROLLBACK, JobAction.VALIDATE),
     SUCCESS_ROLLBACK(3),
-    PARTIAL_ROLLBACK(4),
-    WAITING(5, JobAction.RUN, JobAction.ROLLBACK),
-    RUNNING(6),
-    ERROR(7, JobAction.SKIP, JobAction.WAIT, JobAction.RUN, JobAction.ROLLBACK, JobAction.VALIDATE),
-    ROLLBACK(8),
-    ERROR_ROLLBACK(9, JobAction.SKIP, JobAction.WAIT, JobAction.ROLLBACK, JobAction.VALIDATE),
-    INVALID(10, JobAction.SKIP, JobAction.VALIDATE);
+    NO_ROLLBACK(4),
+    PARTIAL_ROLLBACK(5),
+    WAITING(6, JobAction.RUN, JobAction.ROLLBACK),
+    RUNNING(7),
+    ERROR(8, JobAction.SKIP, JobAction.WAIT, JobAction.RUN, JobAction.ROLLBACK, JobAction.VALIDATE),
+    ROLLBACK(9),
+    ERROR_ROLLBACK(10, JobAction.SKIP, JobAction.WAIT, JobAction.ROLLBACK, JobAction.VALIDATE),
+    INVALID(11, JobAction.SKIP, JobAction.VALIDATE);
 
     static final Set<JobStatus> SAVED_STATUSES = new HashSet<>(Arrays.asList(
             JobStatus.SUCCESS, JobStatus.ERROR,
@@ -43,11 +44,25 @@ public enum JobStatus {
         }
     }
 
-    public static JobStatus max(Collection<StepController<?>> steps,
-                                JobStatus defaultValue) {
+    public static JobStatus max(Collection<Step<?>> steps, JobStatus defaultValue) {
         return steps.stream()
-                .map(StepController::status)
+                .map(Step::getStatus)
                 .max(Comparator.comparingInt(status -> status.priority))
+                .map(status -> handleNoRollbackStatus(steps, status))
                 .orElse(defaultValue);
+    }
+
+    private static JobStatus handleNoRollbackStatus(Collection<Step<?>> steps, JobStatus currentStatus) {
+        if (currentStatus != NO_ROLLBACK) {
+            return currentStatus;
+        }
+        boolean allNoRollback = steps.stream()
+                .map(Step::getStatus)
+                .allMatch(s -> s == NO_ROLLBACK);
+        if (allNoRollback) {
+            return NO_ROLLBACK;
+        } else {
+            return PARTIAL_ROLLBACK;
+        }
     }
 }

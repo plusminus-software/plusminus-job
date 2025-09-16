@@ -17,9 +17,8 @@ public class ErrorStep extends AbstractStep {
     }
 
     @Override
-    public boolean rollback() {
-        checkError();
-        return super.rollback();
+    public Runnable rollback() {
+        return this::checkError;
     }
 
     private void checkError() {

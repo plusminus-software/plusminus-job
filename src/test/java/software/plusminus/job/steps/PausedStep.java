@@ -21,10 +21,11 @@ public class PausedStep extends AbstractStep {
     }
 
     @Override
-    public boolean rollback() {
-        if (paused.get()) {
-            await().until(() -> !paused.get());
-        }
-        return super.rollback();
+    public Runnable rollback() {
+        return () -> {
+            if (paused.get()) {
+                await().until(() -> !paused.get());
+            }
+        };
     }
 }

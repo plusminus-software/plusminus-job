@@ -1,12 +1,11 @@
 package software.plusminus.job.steps;
 
 import software.plusminus.job.JobStatus;
-import software.plusminus.job.Step;
+import software.plusminus.job.StepRunner;
 
-public abstract class AbstractStep implements Step<Void> {
+public abstract class AbstractStep implements StepRunner<Void> {
 
     private JobStatus status;
-    private boolean rollback = true;
 
     @Override
     public Void run() {
@@ -14,12 +13,8 @@ public abstract class AbstractStep implements Step<Void> {
     }
 
     @Override
-    public boolean rollback() {
-        return rollback;
-    }
-
-    public void rollback(boolean newRollback) {
-        this.rollback = newRollback;
+    public Runnable rollback() {
+        return () -> { };
     }
 
     @Override
