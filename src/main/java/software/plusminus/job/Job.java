@@ -105,6 +105,12 @@ public class Job {
         controller.validate();
     }
 
+    public <T> T lastResult(Step<T> step) {
+        StepController<?> controller = checkIsPresent(progress, step,
+                "Cannot get lastResult of step: not present in job's progress");
+        return (T) controller.lastResult();
+    }
+
     public JobStatus status() {
         return status;
     }

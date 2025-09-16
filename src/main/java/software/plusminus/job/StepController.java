@@ -9,6 +9,7 @@ public class StepController<T> {
     private Step<T> step;
     private JobStatus savedStatus;
     private JobStatus status;
+    private T lastResult;
 
     public T run() {
         checkAction(JobAction.RUN);
@@ -19,6 +20,7 @@ public class StepController<T> {
             if (job != null) {
                 job.addProgress(this);
             }
+            lastResult = result;
             return result;
         } catch (Exception e) {
             changeStatus(JobStatus.ERROR);
@@ -83,6 +85,10 @@ public class StepController<T> {
 
     Step<T> step() {
         return step;
+    }
+
+    T lastResult() {
+        return lastResult;
     }
 
     private void init() {
