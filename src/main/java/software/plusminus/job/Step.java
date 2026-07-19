@@ -9,8 +9,7 @@ import javax.annotation.Nullable;
 public class Step<T> {
 
     private Supplier<T> run;
-    @Nullable
-    private Runnable rollback;
+    private Supplier<Runnable> rollback;
     @Nullable
     private Supplier<Boolean> validator;
     @Nullable
@@ -18,10 +17,10 @@ public class Step<T> {
 
     @Getter
     @Nullable
-    private T result;
-    private JobStatus savedStatus;
+    private volatile T result;
+    private volatile JobStatus savedStatus;
     @Getter
-    private JobStatus status;
+    private volatile JobStatus status;
     @Nullable
     private Job job;
 
@@ -29,6 +28,13 @@ public class Step<T> {
                 @Nullable Runnable rollback,
                 @Nullable Supplier<Boolean> validator,
                 @Nullable Consumer<JobStatus> listener) {
+        this(run, () -> rollback, validator, listener);
+    }
+
+    private Step(Supplier<T> run,
+                 Supplier<Runnable> rollback,
+                 @Nullable Supplier<Boolean> validator,
+                 @Nullable Consumer<JobStatus> listener) {
         this.run = run;
         this.rollback = rollback;
         this.validator = validator;
@@ -57,8 +63,9 @@ public class Step<T> {
         checkAction(JobAction.ROLLBACK);
         try {
             changeStatus(JobStatus.ROLLBACK);
-            if (rollback != null) {
-                rollback.run();
+            Runnable rollbackAction = rollback.get();
+            if (rollbackAction != null) {
+                rollbackAction.run();
                 changeStatus(JobStatus.SUCCESS_ROLLBACK);
             } else {
                 changeStatus(JobStatus.NO_ROLLBACK);
@@ -138,15 +145,16 @@ public class Step<T> {
     }
 
     public static <T> Step<T> of(Supplier<T> run) {
-        return new Step<>(run, null, null, null);
+        return new Step<>(run, (Runnable) null, null, null);
     }
 
     public static <T> Step<T> of(Supplier<T> run,
                                  Supplier<Boolean> validator) {
-        return new Step<>(run, null, validator, null);
+        return new Step<>(run, (Runnable) null, validator, null);
     }
 
     public static <T> Step<T> of(StepRunner<T> runner) {
-        return new Step<>(runner::run, runner.rollback(), runner::validate, runner::status);
+        Supplier<Runnable> rollbackSupplier = runner::rollback;
+        return new Step<>(runner::run, rollbackSupplier, runner::validate, runner::status);
     }
 }

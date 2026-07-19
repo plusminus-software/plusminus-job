@@ -6,12 +6,11 @@
 
     <parent>
         <groupId>software.plusminus</groupId>
-        <artifactId>plusminus-parent-public</artifactId>
-        <version>1.0-SNAPSHOT</version>
+        <artifactId>plusminus-parent</artifactId>
+        <version>1.7</version>
         <relativePath/>
     </parent>
 
-    <groupId>software.plusminus</groupId>
     <artifactId>plusminus-job</artifactId>
     <version>1.0-SNAPSHOT</version>
 
@@ -19,6 +18,20 @@
     <description>The implementation of running, re-running, rolling back, and performing other actions on multi-step jobs.</description>
     <url>https://github.com/plusminus-software/plusminus-job</url>
 
+    <scm>
+        <url>https://github.com/plusminus-software/plusminus-job/tree/main</url>
+        <connection>scm:git:git://github.com/plusminus-software/plusminus-job.git</connection>
+        <developerConnection>scm:git:ssh://github.com:plusminus-software/plusminus-job.git</developerConnection>
+        <tag>HEAD</tag>
+    </scm>
+    <issueManagement>
+        <system>Github Issues</system>
+        <url>https://github.com/plusminus-software/plusminus-job/issues</url>
+    </issueManagement>
+    <ciManagement>
+        <system>Github Actions</system>
+        <url>https://github.com/plusminus-software/plusminus-job/actions</url>
+    </ciManagement>
     <licenses>
         <license>
             <name>Apache License, Version 2.0</name>
@@ -26,7 +39,6 @@
             <distribution>repo</distribution>
         </license>
     </licenses>
-
     <developers>
         <developer>
             <name>Taras Shpek</name>
@@ -38,13 +50,6 @@
             <timezone>Europe/Kyiv</timezone>
         </developer>
     </developers>
-
-    <scm>
-        <connection>scm:git:git://github.com/plusminus-software/plusminus-job.git</connection>
-        <developerConnection>scm:git:ssh://github.com:plusminus-software/plusminus-job.git</developerConnection>
-        <url>https://github.com/plusminus-software/plusminus-job/tree/main</url>
-        <tag>HEAD</tag>
-    </scm>
 
     <dependencies>
         <dependency>

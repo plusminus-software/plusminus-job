@@ -4,6 +4,7 @@ import lombok.Getter;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
@@ -11,11 +12,11 @@ import javax.annotation.Nullable;
 public class Job {
 
     private List<Step<?>> steps = new ArrayList<>();
-    private List<Step<?>> progress = new ArrayList<>();
+    private List<Step<?>> progress = new CopyOnWriteArrayList<>();
     @Nullable
     private Consumer<JobStatus> listener;
     @Getter()
-    private JobStatus status = JobStatus.INVALID;
+    private volatile JobStatus status = JobStatus.INVALID;
 
     public Job() {
         this(null);
@@ -35,6 +36,7 @@ public class Job {
         boolean result = steps.remove(step);
         if (result) {
             step.unlink();
+            calculateStatus();
         }
         return result;
     }

@@ -12,16 +12,12 @@ import javax.validation.ValidatorFactory;
 @UtilityClass
 public class ValidationUtils {
 
-    private static final Validator VALIDATOR;
+    private static final ValidatorFactory VALIDATOR_FACTORY = Validation.byDefaultProvider()
+            .configure()
+            .messageInterpolator(new ParameterMessageInterpolator())
+            .buildValidatorFactory();
 
-    static {
-        try (ValidatorFactory validatorFactory = Validation.byDefaultProvider()
-                .configure()
-                .messageInterpolator(new ParameterMessageInterpolator())
-                .buildValidatorFactory()) {
-            VALIDATOR = validatorFactory.getValidator();
-        }
-    }
+    private static final Validator VALIDATOR = VALIDATOR_FACTORY.getValidator();
 
     public <T> Set<ConstraintViolation<T>> validate(T object) {
         return VALIDATOR.validate(object);
